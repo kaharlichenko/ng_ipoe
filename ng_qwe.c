@@ -51,11 +51,20 @@
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <net/if_vlan_var.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
 
 #include <netgraph/ng_message.h>
 #include <netgraph/netgraph.h>
 
 #include "ng_qwe.h"
+
+#define IS_DHCP(udp) \
+( \
+(((udp)->uh_sport == htons(67)) && ((udp)->uh_dport == htons(68))) || \
+(((udp)->uh_sport == htons(68)) && ((udp)->uh_dport == htons(67))) \
+)
 
 /*
  * This section contains the netgraph method declarations for the
@@ -163,77 +172,78 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 	const private_p priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
 	hook_p		target = priv->nomatch;
 	int		error = 0;
-	int		header_len = 0;
 	struct mbuf	*m = NULL;
 	struct ether_vlan_header *evl = NULL;
-	u_int16_t	*proto_p;
+	struct ip	*ip = NULL;
+	struct udphdr	*udp = NULL;
 
 
 	if (hook == priv->nomatch) {
 		/* Forward from nomatch to downstream as is. */
-		/* NG_FWD_ITEM_HOOK(error, item, priv->downstream); */
 		target = priv->downstream;
 		goto deliver;
 	} else if (hook == priv->downstream) {
-		/* NGI_GET_M(item, m); */
 		m = NGI_M(item);
 
-		header_len = (m->m_flags & M_VLANTAG) ?
-		    /* Outter tag is stored out of band. */
-		    sizeof(*evl) :
-		    /* Both tags are stored in-band. */
-		    sizeof(*evl) + ETHER_VLAN_ENCAP_LEN;
+		if (((m->m_flags & M_VLANTAG) == 0)
+		    || (m->m_pkthdr.len < sizeof(*evl))) {
+			/*
+			 * We care only about QinQ traffic.
+			 * Deliver to nomatch.
+			 */
+			goto deliver;
+		}
 
-		if (m->m_len < header_len &&
-		    (m = m_pullup(m, header_len)) == NULL) {
+		if (m->m_len < sizeof(*evl) &&
+		    (m = m_pullup(m, sizeof(*evl))) == NULL) {
 			NG_FREE_ITEM(item);
 			return (EINVAL);
 		}
-		/*
-		 * We care only about QinQ traffic, one of the tags
-		 * can be stored either in-band or out of band.
-		 */
+
 		evl = mtod(m, struct ether_vlan_header *);
-		/*
-		 * Outter tag, if stored in-bound, inner otherwise.
-		 * Must be present anyway.
-		 */
+
+		/* Inner tag must also be present. */
 		if (evl->evl_encap_proto != htons(ETHERTYPE_VLAN)) 
+			/*
+			 * We care only about QinQ traffic.
+			 * Deliver to nomatch.
+			 */
 			goto deliver;
 
-		/*
-		 * If both tags are stored in-bound,
-		 * make sure the inner tag is present.
-		 */
-		if ((m->m_flags & M_VLANTAG) == 0 &&
-		    (evl->evl_proto != htons(ETHERTYPE_VLAN))) {
-			goto deliver;
-		}
-printf("QinQ packet received\n");
-
-		/*
-		 * Regardless of outter tag storage encapsulated
-		 * protocol resides in the last two bytes of the header.
-		 */
-		proto_p = (u_int16_t *)(mtod(m, char *) + header_len -
-		    sizeof(*proto_p));
-
-printf("Header length: %d\n", header_len);
-printf("Encapsulated ether type: %x\n", ntohs(*proto_p));
-
-		if (*proto_p == htons(ETHERTYPE_ARP)) {
-printf("Fucking ARP!\n");
+		if (evl->evl_proto == htons(ETHERTYPE_ARP)) {
 			target = priv->service;
 			goto inject_tag;
 		}
 
-		/*
-		if (*proto_p != htons(ETHERTYPE_IP))
+		if (evl->evl_proto != htons(ETHERTYPE_IP))
 			goto deliver;
-		*/
 	
-		/* TODO: Handle DHCP */; 
+		/* Dig into IPv4 and UDP to check for DHCP */
+		if (m->m_len < sizeof(*evl) + sizeof(*ip) &&
+		    (m = m_pullup(m, sizeof(*evl) + sizeof(*ip))) == NULL) {
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
 
+		ip = (struct ip *)(mtod(m, char *) + sizeof(*evl));
+
+		if ((ip->ip_v != IPVERSION) || (ip->ip_hl < 5) ||
+		    (ip->ip_p != IPPROTO_UDP)) {
+			goto deliver;
+		}
+
+		if (m->m_len < sizeof(*evl) + sizeof(*ip) + sizeof(*udp) &&
+		    (m = m_pullup(m, sizeof(*evl) + sizeof(*ip) +
+		    sizeof(*udp))) == NULL) {
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
+
+		udp = (struct udphdr *)((char *)ip + (ip->ip_hl << 2));
+		if (!IS_DHCP(udp))
+			goto deliver;
+
+		target = priv->service;
 	/* TODO: Handle packets incoming on service hook */
 	} else {
 		/* XXX: Log? */; 
@@ -241,9 +251,11 @@ printf("Fucking ARP!\n");
 	}
 
 inject_tag:
-	if ((m->m_flags & M_VLANTAG) == 0)
-		/* The outter tag is already in the packet header. */
-		goto deliver;
+	/*
+	 * Packet is heading towards service hook.
+	 * Extract vlan tag from mbuf packet header and place it
+	 * into the body itself before delivery.
+	 */
 
 	/* TODO: Copy outter tag incorporating code from ng_vlan */
 
@@ -253,10 +265,6 @@ deliver:
 
 	if (item)
 		NG_FREE_ITEM(item);
-
-	if (error != 0) {
-		printf("Failed to deliver: %d", error);
-	}
 
 	return (error);
 }
