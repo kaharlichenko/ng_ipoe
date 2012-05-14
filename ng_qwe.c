@@ -183,6 +183,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 		target = priv->downstream;
 		goto deliver;
 	} else if (hook == priv->downstream) {
+		/* TODO: Factor out into ng_qwe_is_service() */
 		if (((m->m_flags & M_VLANTAG) == 0)
 		    || (m->m_pkthdr.len < sizeof(*evl))) {
 			/*
@@ -295,27 +296,13 @@ inject_tag:
 	 * Packet is heading towards service hook.
 	 * Extract vlan tag from mbuf packet header and place it
 	 * into the body itself before delivery.
-	 *
-	 * Inspired by ng_vlan(4) implementation.
 	 */
-	M_PREPEND(m, ETHER_VLAN_ENCAP_LEN, M_DONTWAIT);
-	/* M_PREPEND takes care of m_len and m_pkthdr.len. */
-	if (m == NULL || (m->m_len < sizeof(*evl) &&
-	    (m = m_pullup(m, sizeof(*evl))) == NULL)) {
+
+	m = ether_vlanencap(m, m->m_pkthdr.ether_vtag);
+	if (m == NULL) {
 		NG_FREE_ITEM(item);
 		return (ENOMEM);
 	}
-	/*
-	 * Transform the Ethernet header into an Ethernet header
-	 * with 802.1Q encapsulation.
-	 */
-	bcopy(mtod(m, char *) + ETHER_VLAN_ENCAP_LEN,
-	    mtod(m, char *), ETHER_HDR_LEN - ETHER_TYPE_LEN);
-	evl = mtod(m, struct ether_vlan_header *);
-	evl->evl_encap_proto = htons(ETHERTYPE_VLAN);
-	evl->evl_tag = htons(m->m_pkthdr.ether_vtag);
-
-	m->m_flags &= ~M_VLANTAG;
 
 deliver:
 	if (target != NULL)
