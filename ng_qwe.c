@@ -242,10 +242,52 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			goto deliver;
 
 		target = priv->service;
-	/* TODO: Handle packets incoming on service hook */
+	} else if (hook == priv->service) {
+		/*
+		 * We care only about QinQ traffic with both tags
+		 * stored inbound.
+		 */
+		if (m->m_flags & M_VLANTAG) {
+			NG_FREE_M(m);
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
+
+		if (m->m_len < sizeof(*evl) + ETHER_VLAN_ENCAP_LEN &&
+		    (m = m_pullup(m, sizeof(*evl) +
+		    ETHER_VLAN_ENCAP_LEN)) == NULL) {
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
+
+		/* Make sure we really got a QinQ packet. */
+		evl = mtod(m, struct ether_vlan_header *);
+		if ((evl->evl_encap_proto != htons(ETHERTYPE_VLAN)) ||
+		    (evl->evl_proto != htons(ETHERTYPE_VLAN))) {
+		       NG_FREE_M(m);
+		       NG_FREE_ITEM(item);
+		       return (EINVAL);
+		}
+
+		/*
+		 * Move the outter tag from Ethernet header
+		 * to mbuf header.
+		 */
+		m->m_pkthdr.ether_vtag = evl->evl_encap_proto;
+		m->m_flags |= M_VLANTAG;
+
+		bcopy(mtod(m, char *),
+		    mtod(m, char *) + ETHER_VLAN_ENCAP_LEN,
+		    ETHER_HDR_LEN - ETHER_TYPE_LEN);
+
+		m_adj(m, ETHER_VLAN_ENCAP_LEN);
+
+		target = priv->downstream;
+		goto deliver;
 	} else {
-		/* XXX: Log? */; 
+		/* TODO: Handle vlan hooks */; 
 		target = NULL;
+		goto deliver;
 	}
 
 inject_tag:
