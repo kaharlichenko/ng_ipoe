@@ -216,9 +216,6 @@ ng_qwe_constructor(node_p node)
 	return (0);
 }
 
-/*
- * Give our ok for a hook to be added...
- */
 static int
 ng_qwe_newhook(node_p node, hook_p hook, const char *name)
 {
@@ -231,6 +228,7 @@ ng_qwe_newhook(node_p node, hook_p hook, const char *name)
 	else if (strcmp(name, NG_QWE_HOOK_SERVICE) == 0)
 	      priv->service = hook;
 	else {
+		/* TODO: Allocate vlan hook structure on creation. */
 		/*
 		 * Any other hook name is valid and can
 		 * later be associated with vlan tag pair.
@@ -249,22 +247,18 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 	int error = 0;
 	struct ng_mesg *msg, *resp = NULL;
 	struct ng_qwe_filter *vf;
-	//struct filter *f;
 	hook_p hook;
-	//struct ng_vlan_table *t;
-	//int i;
 
-printf("1\n");
+	/* TODO: Implement setaddr message. */
+
 	NGI_GET_MSG(item, msg);
 	/* Deal with message according to cookie and command. */
 	switch (msg->header.typecookie) {
 	case NGM_QWE_COOKIE:
 		switch (msg->header.cmd) {
 		case NGM_QWE_ADD_FILTER:
-printf("2\n");
 			/* Check that message is long enough. */
 			if (msg->header.arglen != sizeof(*vf)) {
-printf("3\n");
 				error = EINVAL;
 				break;
 			}
@@ -273,14 +267,12 @@ printf("3\n");
 			if (IS_INVALID_VLAN(vf->outer_vlan) ||
 			    IS_INVALID_VLAN(vf->inner_vlan)) {
 				error = EINVAL;
-printf("4\n");
 				break;
 			}
 			/* Check that a referenced hook exists. */
 			hook = ng_findhook(node, vf->hook);
 			if (hook == NULL) {
 				error = ENOENT;
-printf("5\n");
 				break;
 			}
 			/* And is not one of the special hooks. */
@@ -411,7 +403,6 @@ static int
 ng_qwe_rcvdata(hook_p hook, item_p item)
 {
 	const private_p priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
-	hook_p		target = NULL;
 	int		error = 0;
 	struct mbuf	*m = NULL;
 	struct ether_vlan_header *evl = NULL;
@@ -419,99 +410,49 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 	struct udphdr	*udp = NULL;
 	struct filter	*target_filter = NULL;
 
+#define FORWARD_AND_RETURN(hook) \
+	do { \
+		NG_FWD_NEW_DATA(error, item, (hook), m); \
+		return (error); \
+	} while (0)
+
+	if (priv->downstream == NULL) {
+		/* There's nothing to do actually. */
+		NG_FREE_ITEM(item);
+		return (0);
+	}
+
 	NGI_GET_M(item, m);
 	if (hook == priv->nomatch) {
 		/* Forward from nomatch to downstream as is. */
-		target = priv->downstream;
-	} else if (hook == priv->downstream) {
-		/* Decide where to deliver the packet to. */
-		do {
-			/*
-			 * Since we aren't sure that the packet is
-			 * a QinQ one, make nomatch as a default for now.
-			 */
-			target = priv->nomatch;
-
-			if (((m->m_flags & M_VLANTAG) == 0)
-			    || (m->m_pkthdr.len < sizeof(*evl))) {
-				/* No outer tag. */
-				break;
-			}
-
-			if (m->m_len < sizeof(*evl) &&
-			    (m = m_pullup(m, sizeof(*evl))) == NULL) {
-				NG_FREE_ITEM(item);
-				return (EINVAL);
-			}
-
-			evl = mtod(m, struct ether_vlan_header *);
-
-			if (evl->evl_encap_proto != htons(ETHERTYPE_VLAN)) 
-				/* No inner tag. */
-				break;
-
-			if (evl->evl_proto == htons(ETHERTYPE_ARP)) {
-				/* QinQ ARP traffic is a service one. */
-				target = priv->service;
-				break;
-			}
-
-			if (evl->evl_proto != htons(ETHERTYPE_IP))
-				break;
-		
-			/* Dig into IPv4 and UDP to check for DHCP. */
-			if (m->m_len < sizeof(*evl) + sizeof(*ip) &&
-			    (m = m_pullup(m, sizeof(*evl) +
-			    sizeof(*ip))) == NULL) {
-				NG_FREE_ITEM(item);
-				return (EINVAL);
-			}
-
-			ip = (struct ip *)(mtod(m, char *) + sizeof(*evl));
-
-			if ((ip->ip_v != IPVERSION) || (ip->ip_hl < 5))
-				/*
-				 * Forward a non-IP packet to nomatch as well.
-				 */
-				break;
-
-			/*
-			 * Hereinafter we got QinQ IP packet.
-			 * Though it still might be a service one (in case
-			 * it turns out to be DHCP) it is now a candidate
-			 * for vlan hook delivery.
-			 *
-			 * Figure out whether it is DHCP and if not
-			 * postpone the decision for now.
-			 */
-			target = NULL;
-			if (ip->ip_p != IPPROTO_UDP)
-				/* Non-UDP packet. Device later. */
-				break;
-
-			if (m->m_len < sizeof(*evl) + sizeof(*ip) + sizeof(*udp) &&
-			    (m = m_pullup(m, sizeof(*evl) + sizeof(*ip) +
-			    sizeof(*udp))) == NULL) {
-				NG_FREE_ITEM(item);
-				return (EINVAL);
-			}
-
-			udp = (struct udphdr *)((char *)ip + (ip->ip_hl << 2));
-			if (IS_DHCP(udp)) {
-				/* QinQ DHCP traffic is a service one. */
-				target = priv->service;
-				break;
-			}
-		} while (0);
-
+		FORWARD_AND_RETURN(priv->downstream);
+	}
+	if (hook == priv->downstream) {
 		/*
-		 * Here we might already have a decision
-		 * on where to deliver the packet to.
+		 * Decide where to deliver the packet to.
+		 * We aren't sure that the packet is a QinQ one.
 		 */
+		if (((m->m_flags & M_VLANTAG) == 0)
+		    || (m->m_pkthdr.len < sizeof(*evl))) {
+			/* No outer tag. */
+			FORWARD_AND_RETURN(priv->nomatch);
+		}
 
-		if (target == priv->service) {
+		if (m->m_len < sizeof(*evl) &&
+		    (m = m_pullup(m, sizeof(*evl))) == NULL) {
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
+
+		evl = mtod(m, struct ether_vlan_header *);
+
+		if (evl->evl_encap_proto != htons(ETHERTYPE_VLAN)) 
+			/* No inner tag. */
+			FORWARD_AND_RETURN(priv->nomatch);
+
+		if (evl->evl_proto == htons(ETHERTYPE_ARP)) {
 			/*
-			 * Packet is heading towards service hook.
+			 * QinQ ARP traffic is a service one.
 			 * Extract vlan tag from mbuf packet header
 			 * and place it into the body itself before delivery.
 			 */
@@ -521,36 +462,85 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 				NG_FREE_ITEM(item);
 				return (ENOMEM);
 			}
-		} else if (target == NULL) {
-			/*
-			 * Still not decided what to do with a packet.
-			 * Though we know it is QinQ so it might go out
-			 * of one of the vlan hooks.
-			 */
-			target_filter = ng_qwe_find_entry(priv,
-			    EVL_VLANOFTAG(m->m_pkthdr.ether_vtag),
-			    EVL_VLANOFTAG(ntohs(evl->evl_tag)));
-
-			if (target_filter != NULL) {
-				/*
-				 * Target hook found.
-				 * Since we are doing IP over Ethernet 
-				 * the target node expects no Ethernet header 
-				 * so strip it.
-				 */
-				m->m_flags &= ~M_VLANTAG;
-				m_adj(m, sizeof(*evl));
-
-				target = target_filter->hook;
-			} else {
-				/*
-				 * Target hook not found.
-				 * Deliver to nomatch as is.
-				 */
-			}
-		} else {
-			/* Must be nomatch. Deliver packet as is. */
+			FORWARD_AND_RETURN(priv->service);
 		}
+
+		if (evl->evl_proto != htons(ETHERTYPE_IP))
+			FORWARD_AND_RETURN(priv->nomatch);
+
+		/* Dig into IPv4 and UDP to check for DHCP. */
+		if (m->m_len < sizeof(*evl) + sizeof(*ip) &&
+		    (m = m_pullup(m, sizeof(*evl) + sizeof(*ip))) == NULL) {
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
+
+		ip = (struct ip *)(mtod(m, char *) + sizeof(*evl));
+
+		if ((ip->ip_v != IPVERSION) || (ip->ip_hl < 5))
+			/* Forward a non-IP packet to nomatch as well. */
+			FORWARD_AND_RETURN(priv->nomatch);
+
+		/*
+		 * Hereinafter we got QinQ IP packet.
+		 * Though it still might be a service one (in case
+		 * it turns out to be DHCP) it is now a candidate
+		 * for vlan hook delivery.
+		 */
+		if (ip->ip_p == IPPROTO_UDP) {
+			if (m->m_len < sizeof(*evl) + sizeof(*ip) +
+			    sizeof(*udp) &&
+			    (m = m_pullup(m, sizeof(*evl) + sizeof(*ip) +
+			    sizeof(*udp))) == NULL) {
+				NG_FREE_ITEM(item);
+				return (EINVAL);
+			}
+
+			udp = (struct udphdr *)((char *)ip + (ip->ip_hl << 2));
+			if (IS_DHCP(udp)) {
+				/*
+				 * QinQ DHCP traffic is a service one.
+				 * Extract vlan tag from mbuf packet header
+				 * and place it into the body itself before
+				 * delivery.
+				 */
+
+				m = ether_vlanencap(m, m->m_pkthdr.ether_vtag);
+				if (m == NULL) {
+					NG_FREE_ITEM(item);
+					return (ENOMEM);
+				}
+				FORWARD_AND_RETURN(priv->service);
+			}
+		}
+
+		/*
+		 * Now we are sure that we got a QinQ IP packet
+		 * that is not a service packet.
+		 *
+		 * Try to find a vlan hook for it otherwise deliver to nomatch.
+		 */
+		target_filter = ng_qwe_find_entry(priv,
+		    EVL_VLANOFTAG(m->m_pkthdr.ether_vtag),
+		    EVL_VLANOFTAG(ntohs(evl->evl_tag)));
+
+		if (target_filter != NULL) {
+			/*
+			 * Target hook found.
+			 * Since we are doing IP over Ethernet 
+			 * the target node expects no Ethernet header 
+			 * so strip it.
+			 */
+			m->m_flags &= ~M_VLANTAG;
+			m_adj(m, sizeof(*evl));
+
+			FORWARD_AND_RETURN(target_filter->hook);
+		}
+		/*
+		 * Target hook not found.
+		 * Deliver to nomatch as is.
+		 */
+		FORWARD_AND_RETURN(priv->nomatch);
 	} else if (hook == priv->service) {
 		/*
 		 * We care only about QinQ traffic with both tags
@@ -591,21 +581,15 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 
 		m_adj(m, ETHER_VLAN_ENCAP_LEN);
 
-		target = priv->downstream;
+		FORWARD_AND_RETURN(priv->downstream);
 	} else {
-		/* TODO: Handle vlan hooks */; 
-		target = NULL;
-	}
-
-	if (target != NULL)
-		NG_FWD_NEW_DATA(error, item, target, m);
-
-	if (item) {
+		/* TODO: Handle packets coming from vlan hooks. */
 		NG_FREE_M(m);
 		NG_FREE_ITEM(item);
+		return (0);
 	}
 
-	return (error);
+#undef FORWARD_AND_RETURN
 }
 
 /*
