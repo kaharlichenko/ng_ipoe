@@ -39,6 +39,8 @@
  *
  */
 
+/* TODO: Check the license block */
+
 #ifndef _NETGRAPH_NG_QWE_H_
 #define _NETGRAPH_NG_QWE_H_
 
@@ -50,5 +52,40 @@
 #define NG_QWE_HOOK_NOMATCH	"nomatch"
 #define NG_QWE_HOOK_DOWNSTREAM	"downstream"
 #define NG_QWE_HOOK_SERVICE	"service"
+
+/* Netgraph commands. */
+enum {
+	NGM_QWE_ADD_FILTER = 1,
+	NGM_QWE_DEL_FILTER,
+	NGM_QWE_GET_TABLE
+};
+
+/* For NGM_QWE_ADD_FILTER control message. */
+struct ng_qwe_filter {
+	char		hook[NG_HOOKSIZ];
+	u_int16_t	outer_vlan;
+	u_int16_t	inner_vlan;
+};	
+
+/* Keep this in sync with the above structure definition.  */
+#define	NG_QWE_FILTER_FIELDS	{				\
+	{ "hook",	&ng_parse_hookbuf_type  },		\
+	{ "outer_vlan",	&ng_parse_uint16_type   },		\
+	{ "inner_vlan",	&ng_parse_uint16_type   },		\
+	{ NULL }						\
+}
+
+/* Structure returned by NGM_VLAN_GET_TABLE. */
+struct ng_qwe_table {
+	u_int32_t	n;
+	struct ng_qwe_filter filter[];
+};
+
+/* Keep this in sync with the above structure definition. */
+#define	NG_QWE_TABLE_FIELDS	{				\
+	{ "n",		&ng_parse_uint32_type },		\
+	{ "filter",	&ng_qwe_table_array_type },		\
+	{ NULL }						\
+}
 
 #endif /* _NETGRAPH_NG_QWE_H_ */
