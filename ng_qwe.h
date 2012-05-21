@@ -57,6 +57,9 @@
 enum {
 	NGM_QWE_ADD_FILTER = 1,
 	NGM_QWE_DEL_FILTER,
+	NGM_QWE_ADD_ARP,
+	NGM_QWE_DEL_ARP,
+	NGM_QWE_GET_ARP,
 	NGM_QWE_GET_TABLE
 };
 
@@ -72,6 +75,21 @@ struct ng_qwe_filter {
 	{ "hook",	&ng_parse_hookbuf_type  },		\
 	{ "outer_vlan",	&ng_parse_uint16_type   },		\
 	{ "inner_vlan",	&ng_parse_uint16_type   },		\
+	{ NULL }						\
+}
+
+/* For NGM_QWE_ADD_ARP and NGM_QWE_DEL_ARP control messages. */
+struct ng_qwe_arp {
+	char		hook[NG_HOOKSIZ];
+	struct	in_addr ip;
+	u_char		mac[ETHER_ADDR_LEN];
+};
+
+/* Keep this in sync with the above structure definition.  */
+#define	NG_QWE_ARP_FIELDS	{				\
+	{ "hook",	&ng_parse_hookbuf_type  },		\
+	{ "ip",		&ng_parse_ipaddr_type   },		\
+	{ "mac",	&ng_parse_enaddr_type   },		\
 	{ NULL }						\
 }
 

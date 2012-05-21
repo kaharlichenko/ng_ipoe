@@ -71,6 +71,12 @@
 
 #define IS_INVALID_VLAN(vlan) (((vlan) < 1) || ((vlan) > 4095))
 
+#define IS_FILTER_IN_SERVICE(f) \
+	(((f)->outer_vlan != 0) && ((f)->inner_vlan != 0))
+
+#define IS_HOOK_IN_SERVICE(hook) \
+	IS_FILTER_IN_SERVICE(((struct filter *)NG_HOOK_PRIVATE(hook)))
+
 /*
  * This section contains the netgraph method declarations for the
  * qwe node. These methods define the netgraph 'type'.
@@ -89,6 +95,14 @@ static const struct ng_parse_struct_field ng_qwe_filter_fields[] =
 static const struct ng_parse_type ng_qwe_filter_type = {
 	&ng_parse_struct_type,
 	&ng_qwe_filter_fields
+};
+
+/* Parse type for struct ng_qwe_arp. */
+static const struct ng_parse_struct_field ng_qwe_arp_fields[] =
+	NG_QWE_ARP_FIELDS;
+static const struct ng_parse_type ng_qwe_arp_type = {
+	&ng_parse_struct_type,
+	&ng_qwe_arp_fields
 };
 
 static const struct ng_cmdlist ng_qwe_cmdlist[] = {
@@ -115,6 +129,13 @@ static const struct ng_cmdlist ng_qwe_cmdlist[] = {
 	  &ng_qwe_table_type
 	},
 #endif
+	{
+	  NGM_QWE_COOKIE,
+	  NGM_QWE_ADD_ARP,
+	  "addarp",
+	  &ng_qwe_arp_type,
+	  NULL
+	},
 	{ 0 }
 };
 
@@ -167,27 +188,18 @@ ng_qwe_find_entry(private_p priv,
 	return (NULL);
 }
 
-static int
-ng_qwe_create_entry(hook_p hook, 
+static void
+ng_qwe_add_filter(hook_p hook,
     u_int16_t outer_vlan, u_int16_t inner_vlan)
 {
-	private_p node_priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
-	struct filter *f = malloc(sizeof(*f), M_NETGRAPH, M_NOWAIT | M_ZERO);
+	private_p	node_priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
+	struct filter	*f = NG_HOOK_PRIVATE(hook);
 
-	if (f == NULL)
-		return (0);
-
-	/* Link filter and hook together. */
-	f->hook = hook;
 	f->outer_vlan = outer_vlan;
 	f->inner_vlan = inner_vlan;
-	NG_HOOK_SET_PRIVATE(hook, f);
 
 	/* Register filter in a filter list. */
 	LIST_INSERT_HEAD(&node_priv->filters, f, next);
-	/* priv->nent++;*/
-
-	return (1);
 }
 
 /*
@@ -220,22 +232,30 @@ static int
 ng_qwe_newhook(node_p node, hook_p hook, const char *name)
 {
 	private_p	priv = NG_NODE_PRIVATE(node);
+	struct filter	*f = NULL;
+
+	NG_HOOK_SET_PRIVATE(hook, NULL);
 
 	if (strcmp(name, NG_QWE_HOOK_NOMATCH) == 0)
 		priv->nomatch = hook;
 	else if (strcmp(name, NG_QWE_HOOK_DOWNSTREAM) == 0)
-	      priv->downstream = hook;
+		priv->downstream = hook;
 	else if (strcmp(name, NG_QWE_HOOK_SERVICE) == 0)
-	      priv->service = hook;
+		priv->service = hook;
 	else {
-		/* TODO: Allocate vlan hook structure on creation. */
 		/*
 		 * Any other hook name is valid and can
-		 * later be associated with vlan tag pair.
+		 * later be associated with a vlan tag pair.
 		 */
-	}
+		f = malloc(sizeof(*f), M_NETGRAPH, M_NOWAIT | M_ZERO);
 
-	NG_HOOK_SET_PRIVATE(hook, NULL);
+		if (f == NULL)
+			return (ENOMEM);
+
+		/* Link filter and hook together. */
+		f->hook = hook;
+		NG_HOOK_SET_PRIVATE(hook, f);
+	}
 
 	return (0);
 }
@@ -245,9 +265,10 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 {
 	const private_p priv = NG_NODE_PRIVATE(node);
 	int error = 0;
-	struct ng_mesg *msg, *resp = NULL;
-	struct ng_qwe_filter *vf;
-	hook_p hook;
+	struct ng_mesg		*msg, *resp = NULL;
+	struct ng_qwe_filter	*vf = NULL;
+	struct ng_qwe_arp	*varp = NULL;
+	hook_p hook = NULL;
 
 	/* TODO: Implement setaddr message. */
 
@@ -283,7 +304,7 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				break;
 			}
 			/* And is not already in service. */
-			if (NG_HOOK_PRIVATE(hook) != NULL) {
+			if (IS_HOOK_IN_SERVICE(hook)) {
 				error = EEXIST;
 				break;
 			}
@@ -293,12 +314,9 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				error = EEXIST;
 				break;
 			}
-			/* Create filter. */
-			if (!ng_qwe_create_entry(hook,
-			    vf->outer_vlan, vf->inner_vlan)) {
-				error = ENOMEM;
-				break;
-			}
+			/* Register filter. */
+			ng_qwe_add_filter(hook,
+			    vf->outer_vlan, vf->inner_vlan);
 			break;
 #if 0
 		case NGM_QWE_DEL_FILTER:
@@ -340,6 +358,34 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			}
 			break;
 #endif
+		case NGM_QWE_ADD_ARP:
+			/* Check that message is long enough. */
+			if (msg->header.arglen != sizeof(*varp)) {
+				error = EINVAL;
+				break;
+			}
+			varp = (struct ng_qwe_arp *)msg->data;
+			/* Check that a referenced hook exists. */
+			hook = ng_findhook(node, varp->hook);
+			if (hook == NULL) {
+				error = ENOENT;
+				break;
+			}
+			/* And is not one of the special hooks. */
+			if (hook == priv->downstream ||
+			    hook == priv->service ||
+			    hook == priv->nomatch) {
+				error = EINVAL;
+				break;
+			}
+			/* And is in service. */
+			if (!IS_HOOK_IN_SERVICE(hook)) {
+				error = ENOENT;
+				break;
+			}
+			/* TODO */
+			/* TODO: Check for missing IP and MAC */
+			break;
 		default:		/* Unknown command. */
 			error = EINVAL;
 			break;
@@ -625,7 +671,8 @@ ng_qwe_disconnect(hook_p hook)
 	else if (hook == priv->service)
 		priv->service = NULL;
 	else {
-		/* TODO: Free tags structure. */
+		/* Free tags structure. */
+		free(NG_HOOK_PRIVATE(hook), M_NETGRAPH);
 	}
 	NG_HOOK_SET_PRIVATE(hook, NULL);
 
