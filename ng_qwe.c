@@ -249,7 +249,7 @@ ng_qwe_find_arp(hook_p hook, const struct in_addr * ip,
 	    ("looking for an arp entry in a vlan without an attached filter"));
 
 	LIST_FOREACH(arp, &filter->arp_table, next) {
-		if (bcmp(ip, &arp->ip, sizeof(*ip) != 0))
+		if (bcmp(ip, &arp->ip, sizeof(*ip)) != 0)
 			continue;
 
 		if (match_mac && (bcmp(mac, arp->mac, ETHER_ADDR_LEN) != 0))
@@ -715,7 +715,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			 * Check against ARP table.
 			 */
 
-			if (ng_qwe_find_arp(hook, &ip->ip_src,
+			if (ng_qwe_find_arp(target_filter->hook, &ip->ip_src,
 			    evl->evl_shost, 1) == NULL) {
 				/*
 				 * No entry in ARP found.
