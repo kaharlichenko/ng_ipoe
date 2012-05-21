@@ -136,6 +136,13 @@ static const struct ng_cmdlist ng_qwe_cmdlist[] = {
 	  &ng_qwe_arp_type,
 	  NULL
 	},
+	{
+	  NGM_QWE_COOKIE,
+	  NGM_QWE_DEL_ARP,
+	  "delarp",
+	  &ng_qwe_arp_type,
+	  NULL
+	},
 	{ 0 }
 };
 
@@ -155,11 +162,19 @@ NETGRAPH_INIT(qwe, &typestruct);
 
 
 /* Information we store for each node */
+struct ng_qwe_arp_entry {
+	LIST_ENTRY(ng_qwe_arp_entry) next;
+	struct in_addr	ip;
+	u_char		mac[ETHER_ADDR_LEN];
+};
+LIST_HEAD(arphead, ng_qwe_arp_entry);
+
 struct filter {
 	LIST_ENTRY(filter) next;
 	u_int16_t	outer_vlan;
 	u_int16_t	inner_vlan;
 	hook_p		hook;
+	struct arphead	arp_table;
 };
 
 LIST_HEAD(filterhead, filter);
@@ -173,6 +188,7 @@ struct ng_qwe_private {
 };
 typedef struct ng_qwe_private *private_p;
 
+/* VLAN related functions. */
 static struct filter *
 ng_qwe_find_entry(private_p priv,
     u_int16_t outer_vlan, u_int16_t inner_vlan)
@@ -200,6 +216,92 @@ ng_qwe_add_filter(hook_p hook,
 
 	/* Register filter in a filter list. */
 	LIST_INSERT_HEAD(&node_priv->filters, f, next);
+}
+
+/* ARP related functions. */
+static int
+ng_qwe_is_valid_arp(const struct in_addr * ip, const u_char mac[ETHER_ADDR_LEN])
+{
+	struct in_addr	wildcard_ip = { 0 };
+	const u_char	wildcard_mac[ETHER_ADDR_LEN] =
+		{0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+	if (ETHER_IS_MULTICAST(mac))
+		return (0);
+
+	if (bcmp(ip, &wildcard_ip, sizeof(wildcard_ip)) == 0)
+		return (0);
+
+	if (bcmp(mac, wildcard_mac, ETHER_ADDR_LEN) == 0)
+		return (0);
+
+	return (1);
+}
+
+static struct ng_qwe_arp_entry *
+ng_qwe_find_arp(hook_p hook, const struct in_addr * ip,
+    const u_char mac[ETHER_ADDR_LEN], int match_mac)
+{
+	struct filter *filter = NG_HOOK_PRIVATE(hook);
+	struct ng_qwe_arp_entry *arp;
+
+	KASSERT(filter != NULL,
+	    ("looking for an arp entry in a vlan without an attached filter"));
+
+	LIST_FOREACH(arp, &filter->arp_table, next) {
+		if (bcmp(ip, &arp->ip, sizeof(*ip) != 0))
+			continue;
+
+		if (match_mac && (bcmp(mac, arp->mac, ETHER_ADDR_LEN) != 0))
+			continue;
+
+		return arp;
+	}
+
+	return (NULL);
+}
+
+static int
+ng_qwe_add_arp(hook_p hook, const struct in_addr * ip,
+    const u_char mac[ETHER_ADDR_LEN])
+{
+	struct ng_qwe_arp_entry * arp = ng_qwe_find_arp(hook, ip, mac, 1);
+	struct filter *filter = NG_HOOK_PRIVATE(hook);
+	KASSERT(filter != NULL,
+	    ("attemp to add arp entry to a vlan without an attached filter"));
+
+	if (arp != NULL)
+		return (EEXIST);
+
+	arp = malloc(sizeof(*arp), M_NETGRAPH, M_NOWAIT | M_ZERO);
+	if (arp == NULL)
+		return (ENOMEM);
+
+	bcopy(ip, &arp->ip, sizeof(*ip));
+	bcopy(mac, arp->mac, ETHER_ADDR_LEN);
+
+	/* Attach the arp entry to the filter. */
+	LIST_INSERT_HEAD(&filter->arp_table, arp, next);
+	/* XXX: Increment arp table length counter? */
+
+	return (0);
+}
+
+static int
+ng_qwe_del_arp(hook_p hook, const struct in_addr * ip,
+    const u_char mac[ETHER_ADDR_LEN])
+{
+	struct ng_qwe_arp_entry * arp = ng_qwe_find_arp(hook, ip, mac, 1);
+
+	if (arp == NULL)
+		return (ENOENT);
+
+	/* Remove the arp entry from the filter. */
+	LIST_REMOVE(arp, next);
+	free(arp, M_NETGRAPH);
+	/* XXX: Decrement arp table length counter? */
+
+	return (0);
 }
 
 /*
@@ -252,6 +354,9 @@ ng_qwe_newhook(node_p node, hook_p hook, const char *name)
 		if (f == NULL)
 			return (ENOMEM);
 
+		/* Initialize arp table for this vlan. */
+		LIST_INIT(&f->arp_table);
+
 		/* Link filter and hook together. */
 		f->hook = hook;
 		NG_HOOK_SET_PRIVATE(hook, f);
@@ -269,8 +374,6 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 	struct ng_qwe_filter	*vf = NULL;
 	struct ng_qwe_arp	*varp = NULL;
 	hook_p hook = NULL;
-
-	/* TODO: Implement setaddr message. */
 
 	NGI_GET_MSG(item, msg);
 	/* Deal with message according to cookie and command. */
@@ -379,12 +482,48 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				break;
 			}
 			/* And is in service. */
+#if 0
 			if (!IS_HOOK_IN_SERVICE(hook)) {
 				error = ENOENT;
 				break;
 			}
-			/* TODO */
-			/* TODO: Check for missing IP and MAC */
+#endif
+			/* Validate IP and MAC. */
+			if (!ng_qwe_is_valid_arp(&varp->ip, varp->mac)) {
+				error = EINVAL;
+				break;
+			}
+
+			error = ng_qwe_add_arp(hook, &varp->ip, varp->mac);
+			break;
+		case NGM_QWE_DEL_ARP:
+			/* Check that message is long enough. */
+			if (msg->header.arglen != sizeof(*varp)) {
+				error = EINVAL;
+				break;
+			}
+			varp = (struct ng_qwe_arp *)msg->data;
+			/* Check that a referenced hook exists. */
+			hook = ng_findhook(node, varp->hook);
+			if (hook == NULL) {
+				error = ENOENT;
+				break;
+			}
+			/* And is not one of the special hooks. */
+			if (hook == priv->downstream ||
+			    hook == priv->service ||
+			    hook == priv->nomatch) {
+				error = EINVAL;
+				break;
+			}
+#if 0
+			/* And is in service. */
+			if (!IS_HOOK_IN_SERVICE(hook)) {
+				error = ENOENT;
+				break;
+			}
+#endif
+			error = ng_qwe_del_arp(hook, &varp->ip, varp->mac);
 			break;
 		default:		/* Unknown command. */
 			error = EINVAL;
@@ -573,6 +712,23 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 		if (target_filter != NULL) {
 			/*
 			 * Target hook found.
+			 * Check against ARP table.
+			 */
+
+			if (ng_qwe_find_arp(hook, &ip->ip_src,
+			    evl->evl_shost, 1) == NULL) {
+				/*
+				 * No entry in ARP found.
+				 * Drop the packet.
+				 */
+				NG_FREE_M(m);
+				NG_FREE_ITEM(item);
+
+				/* XXX: Increment error counter. */
+				return (0);
+			}
+
+			/*
 			 * Since we are doing IP over Ethernet 
 			 * the target node expects no Ethernet header 
 			 * so strip it.
@@ -663,6 +819,8 @@ static int
 ng_qwe_disconnect(hook_p hook)
 {
 	const private_p priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
+	struct filter * filter = NG_HOOK_PRIVATE(hook);
+	struct ng_qwe_arp_entry * arp1, * arp2;
 	
 	if (hook == priv->nomatch)
 		priv->nomatch = NULL;
@@ -671,8 +829,20 @@ ng_qwe_disconnect(hook_p hook)
 	else if (hook == priv->service)
 		priv->service = NULL;
 	else {
-		/* Free tags structure. */
-		free(NG_HOOK_PRIVATE(hook), M_NETGRAPH);
+		KASSERT(filter != NULL,
+		    ("disconnecting vlan hook without a filter attached"));
+		/* Free tags structure cleaning arp table first. */
+		arp1 = LIST_FIRST(&filter->arp_table);
+		while (arp1 != NULL) {
+		     arp2 = LIST_NEXT(arp1, next);
+		     free(arp1, M_NETGRAPH);
+		     arp1 = arp2;
+		}
+		/*
+		 * No need to init the arp table list head
+		 * since we are deleting the filter anyway.
+		 */
+		free(filter, M_NETGRAPH);
 	}
 	NG_HOOK_SET_PRIVATE(hook, NULL);
 
