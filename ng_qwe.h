@@ -59,8 +59,7 @@ enum {
 	NGM_QWE_DEL_FILTER,
 	NGM_QWE_ADD_ARP,
 	NGM_QWE_DEL_ARP,
-	NGM_QWE_GET_ARP,
-	NGM_QWE_GET_TABLE
+	NGM_QWE_GET_CONFIG
 };
 
 /* For NGM_QWE_ADD_FILTER control message. */
@@ -93,16 +92,34 @@ struct ng_qwe_arp {
 	{ NULL }						\
 }
 
-/* Structure returned by NGM_VLAN_GET_TABLE. */
-struct ng_qwe_table {
-	u_int32_t	n;
-	struct ng_qwe_filter filter[];
+/* For NGM_QWE_GET_CONFIG control message. */
+struct ng_qwe_arp_entry {
+	struct	in_addr ip;
+	u_char		mac[ETHER_ADDR_LEN];
+};
+
+/* Keep this in sync with the above structure definition.  */
+#define	NG_QWE_ARP_ENTRY_FIELDS	{				\
+	{ "ip",		&ng_parse_ipaddr_type   },		\
+	{ "mac",	&ng_parse_enaddr_type   },		\
+	{ NULL }						\
+}
+
+
+/* Structure returned by NGM_QWE_GET_CONFIG. */
+struct ng_qwe_config {
+	u_int16_t		outer_vlan;
+	u_int16_t		inner_vlan;
+	u_int32_t		arp_len;
+	struct ng_qwe_arp_entry arp[];
 };
 
 /* Keep this in sync with the above structure definition. */
-#define	NG_QWE_TABLE_FIELDS	{				\
-	{ "n",		&ng_parse_uint32_type },		\
-	{ "filter",	&ng_qwe_table_array_type },		\
+#define	NG_QWE_CONFIG_FIELDS	{				\
+	{ "outer_vlan",	&ng_parse_uint16_type },		\
+	{ "inner_vlan",	&ng_parse_uint16_type },		\
+	{ "arp_len",	&ng_parse_uint32_type },		\
+	{ "arp",	&ng_qwe_config_array_type },		\
 	{ NULL }						\
 }
 
