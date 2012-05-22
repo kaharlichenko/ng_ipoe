@@ -240,7 +240,7 @@ ng_qwe_is_valid_arp(const struct in_addr * ip, const u_char mac[ETHER_ADDR_LEN])
 
 static struct ng_qwe_arp_entry *
 ng_qwe_find_arp(hook_p hook, const struct in_addr * ip,
-    const u_char mac[ETHER_ADDR_LEN], int match_mac)
+    const u_char mac[ETHER_ADDR_LEN])
 {
 	struct filter *filter = NG_HOOK_PRIVATE(hook);
 	struct ng_qwe_arp_entry *arp;
@@ -252,7 +252,7 @@ ng_qwe_find_arp(hook_p hook, const struct in_addr * ip,
 		if (bcmp(ip, &arp->ip, sizeof(*ip)) != 0)
 			continue;
 
-		if (match_mac && (bcmp(mac, arp->mac, ETHER_ADDR_LEN) != 0))
+		if ((mac != NULL) && (bcmp(mac, arp->mac, ETHER_ADDR_LEN) != 0))
 			continue;
 
 		return arp;
@@ -265,7 +265,7 @@ static int
 ng_qwe_add_arp(hook_p hook, const struct in_addr * ip,
     const u_char mac[ETHER_ADDR_LEN])
 {
-	struct ng_qwe_arp_entry * arp = ng_qwe_find_arp(hook, ip, mac, 1);
+	struct ng_qwe_arp_entry * arp = ng_qwe_find_arp(hook, ip, mac);
 	struct filter *filter = NG_HOOK_PRIVATE(hook);
 	KASSERT(filter != NULL,
 	    ("attemp to add arp entry to a vlan without an attached filter"));
@@ -291,7 +291,7 @@ static int
 ng_qwe_del_arp(hook_p hook, const struct in_addr * ip,
     const u_char mac[ETHER_ADDR_LEN])
 {
-	struct ng_qwe_arp_entry * arp = ng_qwe_find_arp(hook, ip, mac, 1);
+	struct ng_qwe_arp_entry * arp = ng_qwe_find_arp(hook, ip, mac);
 
 	if (arp == NULL)
 		return (ENOENT);
@@ -594,6 +594,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 	struct ip	*ip = NULL;
 	struct udphdr	*udp = NULL;
 	struct filter	*target_filter = NULL;
+	struct ng_qwe_arp_entry	*arp = NULL;
 
 #define FORWARD_AND_RETURN(hook) \
 	do { \
@@ -647,6 +648,8 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 				NG_FREE_ITEM(item);
 				return (ENOMEM);
 			}
+			m->m_flags &= ~M_VLANTAG;
+			m->m_pkthdr.ether_vtag = 0;
 			FORWARD_AND_RETURN(priv->service);
 		}
 
@@ -716,7 +719,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			 */
 
 			if (ng_qwe_find_arp(target_filter->hook, &ip->ip_src,
-			    evl->evl_shost, 1) == NULL) {
+			    evl->evl_shost) == NULL) {
 				/*
 				 * No entry in ARP found.
 				 * Drop the packet.
@@ -734,6 +737,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			 * so strip it.
 			 */
 			m->m_flags &= ~M_VLANTAG;
+			m->m_pkthdr.ether_vtag = 0;
 			m_adj(m, sizeof(*evl));
 
 			FORWARD_AND_RETURN(target_filter->hook);
@@ -785,10 +789,66 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 
 		FORWARD_AND_RETURN(priv->downstream);
 	} else {
-		/* TODO: Handle packets coming from vlan hooks. */
-		NG_FREE_M(m);
-		NG_FREE_ITEM(item);
-		return (0);
+		/* Packet is coming from one of vlan hooks. */
+		target_filter = NG_HOOK_PRIVATE(hook);
+		if (target_filter == NULL ||
+		    !IS_FILTER_IN_SERVICE(target_filter)) {
+			/*
+			 * Discard packet if no filter added to this vlan hook.
+			 */
+
+			NG_FREE_M(m);
+			NG_FREE_ITEM(item);
+			return (0);
+		}
+
+		/* Dig into IP to find out dst IP. */
+		if (m->m_len < sizeof(*ip) &&
+		    (m = m_pullup(m, sizeof(*ip))) == NULL) {
+			NG_FREE_M(m);
+			NG_FREE_ITEM(item);
+			return (EINVAL);
+		}
+
+		ip = mtod(m, struct ip *);
+		arp = ng_qwe_find_arp(hook, &ip->ip_dst, NULL);
+		if (arp == NULL) {
+			/*
+			 * Discard packet as there's no ARP entry for it.
+			 */
+
+			NG_FREE_M(m);
+			NG_FREE_ITEM(item);
+			return (0);
+		}
+
+		/* Prepend a Ethernet header with 802.1q encapsulation. */
+		M_PREPEND(m, sizeof(*evl), M_DONTWAIT);
+		if (m == NULL) {
+			NG_FREE_ITEM(item);
+			return (ENOMEM);
+		}
+
+		evl = mtod(m, struct ether_vlan_header *);
+
+		/*
+		 * Copy destination MAC address from ARP entry.
+		 * Source MAC address will be set by ng_ether upon delivery.
+		 */
+		bcopy(arp->mac, evl->evl_dhost, ETHER_ADDR_LEN);
+
+		/* Inject outer vlan tag. */
+		m->m_pkthdr.ether_vtag = target_filter->outer_vlan;
+		m->m_flags |= M_VLANTAG;
+
+		/* Inject inner vlan tag. */
+		evl->evl_encap_proto = htons(ETHERTYPE_VLAN);
+		evl->evl_tag = htons(target_filter->inner_vlan);
+
+		/* Make it an IP packet. */
+		evl->evl_proto = htons(ETHERTYPE_IP);
+
+		FORWARD_AND_RETURN(priv->downstream);
 	}
 
 #undef FORWARD_AND_RETURN
