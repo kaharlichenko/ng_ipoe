@@ -113,7 +113,6 @@ static const struct ng_cmdlist ng_qwe_cmdlist[] = {
 	  &ng_qwe_filter_type,
 	  NULL
 	},
-#if 0
 	{
 	  NGM_QWE_COOKIE,
 	  NGM_QWE_DEL_FILTER,
@@ -121,6 +120,7 @@ static const struct ng_cmdlist ng_qwe_cmdlist[] = {
 	  &ng_parse_hookbuf_type,
 	  NULL
 	},
+#if 0
 	{
 	  NGM_QWE_COOKIE,
 	  NGM_QWE_GET_TABLE,
@@ -216,6 +216,19 @@ ng_qwe_add_filter(hook_p hook,
 
 	/* Register filter in a filter list. */
 	LIST_INSERT_HEAD(&node_priv->filters, f, next);
+}
+
+static void
+ng_qwe_del_filter(hook_p hook)
+{
+	private_p	node_priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
+	struct filter	*f = NG_HOOK_PRIVATE(hook);
+
+	f->outer_vlan = 0;
+	f->inner_vlan = 0;
+
+	/* Register filter in a filter list. */
+	LIST_REMOVE(f, next);
 }
 
 /* ARP related functions. */
@@ -421,7 +434,6 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			ng_qwe_add_filter(hook,
 			    vf->outer_vlan, vf->inner_vlan);
 			break;
-#if 0
 		case NGM_QWE_DEL_FILTER:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != NG_HOOKSIZ) {
@@ -430,37 +442,13 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			}
 			/* Check that hook exists and is active. */
 			hook = ng_findhook(node, (char *)msg->data);
-			if (hook == NULL ||
-			    (f = NG_HOOK_PRIVATE(hook)) == NULL) {
+			if (hook == NULL || !IS_HOOK_IN_SERVICE(hook)) {
 				error = ENOENT;
 				break;
 			}
-			/* Purge a rule that refers to this hook. */
-			NG_HOOK_SET_PRIVATE(hook, NULL);
-			LIST_REMOVE(f, next);
-			priv->nent--;
-			free(f, M_NETGRAPH);
+			/* Unregister filter. */
+			ng_qwe_del_filter(hook);
 			break;
-		case NGM_QWE_GET_TABLE:
-			NG_MKRESPONSE(resp, msg, sizeof(*t) +
-			    priv->nent * sizeof(*t->filter), M_NOWAIT);
-			if (resp == NULL) {
-				error = ENOMEM;
-				break;
-			}
-			t = (struct ng_vlan_table *)resp->data;
-			t->n = priv->nent;
-			vf = &t->filter[0];
-			for (i = 0; i < HASHSIZE; i++) {
-				LIST_FOREACH(f, &priv->hashtable[i], next) {
-					vf->vlan = f->vlan;
-					strncpy(vf->hook, NG_HOOK_NAME(f->hook),
-					    NG_HOOKSIZ);
-					vf++;
-				}
-			}
-			break;
-#endif
 		case NGM_QWE_ADD_ARP:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != sizeof(*varp)) {
@@ -481,13 +469,7 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				error = EINVAL;
 				break;
 			}
-			/* And is in service. */
-#if 0
-			if (!IS_HOOK_IN_SERVICE(hook)) {
-				error = ENOENT;
-				break;
-			}
-#endif
+
 			/* Validate IP and MAC. */
 			if (!ng_qwe_is_valid_arp(&varp->ip, varp->mac)) {
 				error = EINVAL;
@@ -516,13 +498,7 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				error = EINVAL;
 				break;
 			}
-#if 0
-			/* And is in service. */
-			if (!IS_HOOK_IN_SERVICE(hook)) {
-				error = ENOENT;
-				break;
-			}
-#endif
+
 			error = ng_qwe_del_arp(hook, &varp->ip, varp->mac);
 			break;
 		default:		/* Unknown command. */
@@ -569,21 +545,6 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 	return (error);
 }
 
-/*
- * Receive data, and do something with it.
- * Actually we receive a queue item which holds the data.
- * If we free the item it will also free the data unless we have
- * previously disassociated it using the NGI_GET_M() macro.
- * Possibly send it out on another link after processing.
- * Possibly do something different if it comes from different
- * hooks. The caller will never free m, so if we use up this data or
- * abort we must free it.
- *
- * If we want, we may decide to force this data to be queued and reprocessed
- * at the netgraph NETISR time.
- * We would do that by setting the HK_QUEUE flag on our hook. We would do that
- * in the connect() method.
- */
 static int
 ng_qwe_rcvdata(hook_p hook, item_p item)
 {
