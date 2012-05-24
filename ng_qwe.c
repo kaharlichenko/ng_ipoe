@@ -52,6 +52,7 @@
 
 #include <net/ethernet.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #include <net/if_vlan_var.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -76,6 +77,9 @@
 
 #define IS_HOOK_IN_SERVICE(hook) \
 	IS_FILTER_IN_SERVICE(((struct filter *)NG_HOOK_PRIVATE(hook)))
+
+#define ARP_ETHER_TO_IP4_HDR_LEN (sizeof(struct arphdr) + \
+    2 * (ETHER_ADDR_LEN + sizeof(struct in_addr)))
 
 /*
  * This section contains the netgraph method declarations for the
@@ -365,6 +369,76 @@ ng_qwe_del_arp(hook_p hook, const struct in_addr *ip,
 	--filter->arp_len;
 
 	return (0);
+}
+
+static struct mbuf *
+ng_qwe_process_arp(struct mbuf * m, private_p priv)
+{
+	struct arphdr *arp = NULL;
+	struct ether_vlan_header *evl = NULL;
+	struct filter *filter = NULL;
+	struct arp_entry *arp_entry = NULL;
+
+	/*
+	 * Since we provide IPv4 over Ethernet we care only about
+	 * IPv4 to Ethernet address resolution.
+	 */
+
+	/* Make sure the packet is of appropriate size. */
+	if (m->m_len < (sizeof(*evl) + ARP_ETHER_TO_IP4_HDR_LEN) &&
+	    (m = m_pullup(m, sizeof(*evl) +
+	    ARP_ETHER_TO_IP4_HDR_LEN)) == NULL) {
+		return (NULL);
+	}
+
+	/*
+	 * Make sure we got IPv4 to Ethernet address
+	 * resolution requets packet.
+	 */
+	arp = (struct arphdr *)(mtod(m, char *) + sizeof(*evl));
+	if (arp->ar_hrd != htons(ARPHRD_ETHER) ||
+	    arp->ar_pro != htons(ETHERTYPE_IP) ||
+	    arp->ar_hln != ETHER_ADDR_LEN ||
+	    arp->ar_pln != sizeof(struct in_addr) ||
+	    arp->ar_op  != htons(ARPOP_REQUEST)) {
+		NG_FREE_M(m);
+		return (NULL);
+	}
+
+	evl = mtod(m, struct ether_vlan_header *);
+	/* Make sure we aren't getting spoofed. */
+	if (bcmp(evl->evl_shost, ar_sha(arp), ETHER_ADDR_LEN) != 0) {
+		/* XXX: Increment counter? */
+		NG_FREE_M(m);
+		return (NULL);
+	}
+
+	/* Drop gratuitous ARP. */
+	if ((bcmp(ar_sha(arp), ar_tha(arp), sizeof(struct in_addr)) == 0) ||
+	    (bcmp(ar_spa(arp), ar_tpa(arp), ETHER_ADDR_LEN) == 0)) {
+		NG_FREE_M(m);
+		return (NULL);
+	}
+
+	/* Check whether we handle this vlan at all. */
+	filter = ng_qwe_find_entry(priv,
+	    EVL_VLANOFTAG(m->m_pkthdr.ether_vtag),
+	    EVL_VLANOFTAG(ntohs(evl->evl_tag)));
+
+	if (filter == NULL) {
+		NG_FREE_M(m);
+		return (NULL);
+	}
+	/*
+	 * Target vlan found.
+	 * Check against ARP table.
+	 */
+	arp_entry = ng_qwe_find_arp(filter->hook,
+	    (struct in_addr *)ar_spa(arp), evl->evl_shost);
+
+
+	/* TODO: Construct ARP reply. */
+	return (NULL);
 }
 
 /*
@@ -716,14 +790,12 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			 * and place it into the body itself before delivery.
 			 */
 
-			m = ether_vlanencap(m, m->m_pkthdr.ether_vtag);
+			m = ng_qwe_process_arp(m, priv);
 			if (m == NULL) {
 				NG_FREE_ITEM(item);
-				return (ENOMEM);
+				return (0);
 			}
-			m->m_flags &= ~M_VLANTAG;
-			m->m_pkthdr.ether_vtag = 0;
-			FORWARD_AND_RETURN(priv->service);
+			FORWARD_AND_RETURN(priv->downstream);
 		}
 
 		if (evl->evl_proto != htons(ETHERTYPE_IP))
