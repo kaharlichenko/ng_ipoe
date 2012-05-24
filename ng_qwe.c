@@ -172,6 +172,20 @@ static const struct ng_cmdlist ng_qwe_cmdlist[] = {
 	},
 	{
 	  NGM_QWE_COOKIE,
+	  NGM_QWE_GET_ENADDR,
+	  "getenaddr",
+	  NULL,
+	  &ng_parse_enaddr_type
+	},
+	{
+	  NGM_QWE_COOKIE,
+	  NGM_QWE_SET_ENADDR,
+	  "setenaddr",
+	  &ng_parse_enaddr_type,
+	  NULL
+	},
+	{
+	  NGM_QWE_COOKIE,
 	  NGM_QWE_GET_CONFIG,
 	  "getconfig",
 	  &ng_parse_hookbuf_type,
@@ -219,6 +233,7 @@ struct ng_qwe_private {
 	hook_p  	downstream;
 	hook_p  	service;
 	struct filterhead filters;
+	u_char		mac[ETHER_ADDR_LEN];
 	node_p		node;		/* back pointer to node */
 };
 typedef struct ng_qwe_private *private_p;
@@ -535,6 +550,22 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			}
 
 			error = ng_qwe_del_arp(hook, &varp->ip, varp->mac);
+			break;
+		case NGM_QWE_GET_ENADDR:
+			NG_MKRESPONSE(resp, msg, ETHER_ADDR_LEN, M_NOWAIT);
+			if (resp == NULL) {
+				error = ENOMEM;
+				break;
+			}
+			bcopy(priv->mac, resp->data, ETHER_ADDR_LEN);
+			break;
+		case NGM_QWE_SET_ENADDR:
+			/* Check that message is long enough. */
+			if (msg->header.arglen != ETHER_ADDR_LEN) {
+				error = EINVAL;
+				break;
+			}
+			bcopy(msg->data, priv->mac, ETHER_ADDR_LEN);
 			break;
 		case NGM_QWE_GET_CONFIG:
 		    {
