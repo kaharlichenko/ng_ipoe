@@ -374,10 +374,10 @@ ng_qwe_del_arp(hook_p hook, const struct in_addr *ip,
 static struct mbuf *
 ng_qwe_process_arp(struct mbuf * m, private_p priv)
 {
-	struct arphdr *arp = NULL;
-	struct ether_vlan_header *evl = NULL;
-	struct filter *filter = NULL;
-	struct arp_entry *arp_entry = NULL;
+	struct arphdr			*arp = NULL;
+	struct ether_vlan_header	*evl = NULL;
+	struct filter			*filter = NULL;
+	struct arp_entry		*arp_entry = NULL;
 
 	/*
 	 * Since we provide IPv4 over Ethernet we care only about
@@ -426,6 +426,7 @@ ng_qwe_process_arp(struct mbuf * m, private_p priv)
 	    EVL_VLANOFTAG(ntohs(evl->evl_tag)));
 
 	if (filter == NULL) {
+		/* This vlan is not served. */
 		NG_FREE_M(m);
 		return (NULL);
 	}
@@ -436,9 +437,29 @@ ng_qwe_process_arp(struct mbuf * m, private_p priv)
 	arp_entry = ng_qwe_find_arp(filter->hook,
 	    (struct in_addr *)ar_spa(arp), evl->evl_shost);
 
+	if (arp_entry == NULL) {
+		/* We don't serve those who aren't in our ARP table. */
+		NG_FREE_M(m);
+		return (NULL);
+	}
 
-	/* TODO: Construct ARP reply. */
-	return (NULL);
+	/* Construct an ARP reply reusing the same mbuf. */
+	arp->ar_op = htons(ARPOP_REPLY);
+
+	/*
+	 * Set target mac address to requester's one.
+	 * Destination mac will be set by ng_ether(4) due to setautosrc flag.
+	 */
+	bcopy(evl->evl_shost, ar_tha(arp), ETHER_ADDR_LEN);
+
+	/* Set source mac address to the one set via setenaddr. */
+	bcopy(priv->mac, ar_sha(arp), ETHER_ADDR_LEN);
+
+	/* Swap source and target IP addresses. */
+	bcopy(ar_tpa(arp), ar_spa(arp), sizeof(struct in_addr));
+	bcopy(&arp_entry->ip, ar_tpa(arp), sizeof(struct in_addr));
+
+	return (m);
 }
 
 /*
@@ -785,9 +806,8 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 
 		if (evl->evl_proto == htons(ETHERTYPE_ARP)) {
 			/*
-			 * QinQ ARP traffic is a service one.
-			 * Extract vlan tag from mbuf packet header
-			 * and place it into the body itself before delivery.
+			 * We serve as a simplistic ARP proxy.
+			 * So try to process QinQ ARP packet right here.
 			 */
 
 			m = ng_qwe_process_arp(m, priv);
@@ -795,6 +815,10 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 				NG_FREE_ITEM(item);
 				return (0);
 			}
+			/*
+			 * If we got an ARP reply packet send it
+			 * back to the wire.
+			 */
 			FORWARD_AND_RETURN(priv->downstream);
 		}
 
