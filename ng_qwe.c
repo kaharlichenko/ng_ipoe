@@ -447,12 +447,16 @@ ng_qwe_process_arp(struct mbuf * m, private_p priv)
 	arp->ar_op = htons(ARPOP_REPLY);
 
 	/*
-	 * Set target mac address to requester's one.
-	 * Destination mac will be set by ng_ether(4) due to setautosrc flag.
+	 * Set destination mac address to requester's one (Ethernet header).
+	 * Set target mac address to requester's one (ARP body).
 	 */
+	bcopy(evl->evl_shost, evl->evl_dhost, ETHER_ADDR_LEN);
 	bcopy(evl->evl_shost, ar_tha(arp), ETHER_ADDR_LEN);
 
-	/* Set source mac address to the one set via setenaddr. */
+	/*
+	 * Set sender mac address to the one set via setenaddr.
+	 * Source mac will be set by ng_ether(4) due to setautosrc flag.
+	 */
 	bcopy(priv->mac, ar_sha(arp), ETHER_ADDR_LEN);
 
 	/* Swap source and target IP addresses. */
