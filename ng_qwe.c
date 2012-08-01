@@ -951,7 +951,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 		 * Move the outter tag from Ethernet header
 		 * to mbuf header.
 		 */
-		m->m_pkthdr.ether_vtag = evl->evl_encap_proto;
+		m->m_pkthdr.ether_vtag = ntohs(evl->evl_tag);
 		m->m_flags |= M_VLANTAG;
 
 		bcopy(mtod(m, char *),
