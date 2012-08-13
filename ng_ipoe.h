@@ -1,5 +1,5 @@
 /*
- * ng_qwe.h
+ * ng_ipoe.h
  */
 
 /*-
@@ -41,88 +41,88 @@
 
 /* TODO: Check the license block */
 
-#ifndef _NETGRAPH_NG_QWE_H_
-#define _NETGRAPH_NG_QWE_H_
+#ifndef _NETGRAPH_NG_IPOE_H_
+#define _NETGRAPH_NG_IPOE_H_
 
-#define NG_QWE_NODE_TYPE	"qwe"
+#define NG_IPOE_NODE_TYPE	"ipoe"
 
-#define NGM_QWE_COOKIE		1336571564
+#define NGM_IPOE_COOKIE		1336571564
 
 /* Hook names */
-#define NG_QWE_HOOK_NOMATCH	"nomatch"
-#define NG_QWE_HOOK_DOWNSTREAM	"downstream"
-#define NG_QWE_HOOK_SERVICE	"service"
+#define NG_IPOE_HOOK_NOMATCH	"nomatch"
+#define NG_IPOE_HOOK_DOWNSTREAM	"downstream"
+#define NG_IPOE_HOOK_SERVICE	"service"
 
 /* Netgraph commands. */
 enum {
-	NGM_QWE_ADD_FILTER = 1,
-	NGM_QWE_DEL_FILTER,
-	NGM_QWE_ADD_ARP,
-	NGM_QWE_DEL_ARP,
-	NGM_QWE_GET_ENADDR,
-	NGM_QWE_SET_ENADDR,
-	NGM_QWE_GET_CONFIG
+	NGM_IPOE_ADD_FILTER = 1,
+	NGM_IPOE_DEL_FILTER,
+	NGM_IPOE_ADD_ARP,
+	NGM_IPOE_DEL_ARP,
+	NGM_IPOE_GET_ENADDR,
+	NGM_IPOE_SET_ENADDR,
+	NGM_IPOE_GET_CONFIG
 };
 
-/* For NGM_QWE_ADD_FILTER control message. */
-struct ng_qwe_filter {
+/* For NGM_IPOE_ADD_FILTER control message. */
+struct ng_ipoe_filter {
 	char		hook[NG_HOOKSIZ];
 	u_int16_t	outer_vlan;
 	u_int16_t	inner_vlan;
 };	
 
 /* Keep this in sync with the above structure definition.  */
-#define	NG_QWE_FILTER_FIELDS	{				\
+#define	NG_IPOE_FILTER_FIELDS	{				\
 	{ "hook",	&ng_parse_hookbuf_type  },		\
 	{ "outer_vlan",	&ng_parse_uint16_type   },		\
 	{ "inner_vlan",	&ng_parse_uint16_type   },		\
 	{ NULL }						\
 }
 
-/* For NGM_QWE_ADD_ARP and NGM_QWE_DEL_ARP control messages. */
-struct ng_qwe_arp {
+/* For NGM_IPOE_ADD_ARP and NGM_IPOE_DEL_ARP control messages. */
+struct ng_ipoe_arp {
 	char		hook[NG_HOOKSIZ];
 	struct	in_addr ip;
 	u_char		mac[ETHER_ADDR_LEN];
 };
 
 /* Keep this in sync with the above structure definition.  */
-#define	NG_QWE_ARP_FIELDS	{				\
+#define	NG_IPOE_ARP_FIELDS	{				\
 	{ "hook",	&ng_parse_hookbuf_type  },		\
 	{ "ip",		&ng_parse_ipaddr_type   },		\
 	{ "mac",	&ng_parse_enaddr_type   },		\
 	{ NULL }						\
 }
 
-/* For NGM_QWE_GET_CONFIG control message. */
-struct ng_qwe_arp_entry {
+/* For NGM_IPOE_GET_CONFIG control message. */
+struct ng_ipoe_arp_entry {
 	struct	in_addr ip;
 	u_char		mac[ETHER_ADDR_LEN];
 };
 
 /* Keep this in sync with the above structure definition.  */
-#define	NG_QWE_ARP_ENTRY_FIELDS	{				\
+#define	NG_IPOE_ARP_ENTRY_FIELDS	{				\
 	{ "ip",		&ng_parse_ipaddr_type   },		\
 	{ "mac",	&ng_parse_enaddr_type   },		\
 	{ NULL }						\
 }
 
 
-/* Structure returned by NGM_QWE_GET_CONFIG. */
-struct ng_qwe_config {
+/* Structure returned by NGM_IPOE_GET_CONFIG. */
+struct ng_ipoe_config {
 	u_int16_t		outer_vlan;
 	u_int16_t		inner_vlan;
 	u_int32_t		arp_len;
-	struct ng_qwe_arp_entry arp[];
+	struct ng_ipoe_arp_entry arp[];
 };
 
 /* Keep this in sync with the above structure definition. */
-#define	NG_QWE_CONFIG_FIELDS	{				\
+#define	NG_IPOE_CONFIG_FIELDS	{				\
 	{ "outer_vlan",	&ng_parse_uint16_type },		\
 	{ "inner_vlan",	&ng_parse_uint16_type },		\
 	{ "arp_len",	&ng_parse_uint32_type },		\
-	{ "arp",	&ng_qwe_config_array_type },		\
+	{ "arp",	&ng_ipoe_config_array_type },		\
 	{ NULL }						\
 }
 
-#endif /* _NETGRAPH_NG_QWE_H_ */
+#endif /* _NETGRAPH_NG_IPOE_H_ */

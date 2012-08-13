@@ -1,5 +1,5 @@
 /*
- * ng_qwe.c
+ * ng_ipoe.c
  */
 
 /*-
@@ -62,7 +62,7 @@
 #include <netgraph/ng_parse.h>
 #include <netgraph/netgraph.h>
 
-#include "ng_qwe.h"
+#include "ng_ipoe.h"
 
 #define IS_DHCP(udp) \
 ( \
@@ -83,117 +83,117 @@
 
 /*
  * This section contains the netgraph method declarations for the
- * qwe node. These methods define the netgraph 'type'.
+ * ipoe node. These methods define the netgraph 'type'.
  */
 
-static ng_constructor_t	ng_qwe_constructor;
-static ng_shutdown_t	ng_qwe_shutdown;
-static ng_rcvmsg_t	ng_qwe_rcvmsg;
-static ng_newhook_t	ng_qwe_newhook;
-static ng_rcvdata_t	ng_qwe_rcvdata;
-static ng_disconnect_t	ng_qwe_disconnect;
+static ng_constructor_t	ng_ipoe_constructor;
+static ng_shutdown_t	ng_ipoe_shutdown;
+static ng_rcvmsg_t	ng_ipoe_rcvmsg;
+static ng_newhook_t	ng_ipoe_newhook;
+static ng_rcvdata_t	ng_ipoe_rcvdata;
+static ng_disconnect_t	ng_ipoe_disconnect;
 
-/* Parse type for struct ng_qwe_filter. */
-static const struct ng_parse_struct_field ng_qwe_filter_fields[] =
-	NG_QWE_FILTER_FIELDS;
-static const struct ng_parse_type ng_qwe_filter_type = {
+/* Parse type for struct ng_ipoe_filter. */
+static const struct ng_parse_struct_field ng_ipoe_filter_fields[] =
+	NG_IPOE_FILTER_FIELDS;
+static const struct ng_parse_type ng_ipoe_filter_type = {
 	&ng_parse_struct_type,
-	&ng_qwe_filter_fields
+	&ng_ipoe_filter_fields
 };
 
-/* Parse type for struct ng_qwe_arp_entry. */
-static const struct ng_parse_struct_field ng_qwe_arp_entry_fields[] =
-	NG_QWE_ARP_ENTRY_FIELDS;
-static const struct ng_parse_type ng_qwe_arp_entry_type = {
+/* Parse type for struct ng_ipoe_arp_entry. */
+static const struct ng_parse_struct_field ng_ipoe_arp_entry_fields[] =
+	NG_IPOE_ARP_ENTRY_FIELDS;
+static const struct ng_parse_type ng_ipoe_arp_entry_type = {
 	&ng_parse_struct_type,
-	&ng_qwe_arp_entry_fields
+	&ng_ipoe_arp_entry_fields
 };
 
-/* Parse type for struct ng_qwe_config. */
+/* Parse type for struct ng_ipoe_config. */
 static int
-ng_qwe_get_arp_length(const struct ng_parse_type *type,
+ng_ipoe_get_arp_length(const struct ng_parse_type *type,
     const u_char *start, const u_char *buf)
 {
-	const struct ng_qwe_config *const config =
-	    (const struct ng_qwe_config *)(buf - 2 * sizeof(u_int16_t) -
+	const struct ng_ipoe_config *const config =
+	    (const struct ng_ipoe_config *)(buf - 2 * sizeof(u_int16_t) -
 	    sizeof(u_int32_t));
 
 	return config->arp_len;
 }
 
-static const struct ng_parse_array_info ng_qwe_arp_array_info = {
-	&ng_qwe_arp_entry_type,
-	ng_qwe_get_arp_length
+static const struct ng_parse_array_info ng_ipoe_arp_array_info = {
+	&ng_ipoe_arp_entry_type,
+	ng_ipoe_get_arp_length
 };
-static const struct ng_parse_type ng_qwe_config_array_type = {
+static const struct ng_parse_type ng_ipoe_config_array_type = {
 	&ng_parse_array_type,
-	&ng_qwe_arp_array_info
+	&ng_ipoe_arp_array_info
 };
 
-static const struct ng_parse_struct_field ng_qwe_config_fields[] =
-	NG_QWE_CONFIG_FIELDS;
-static const struct ng_parse_type ng_qwe_config_type = {
+static const struct ng_parse_struct_field ng_ipoe_config_fields[] =
+	NG_IPOE_CONFIG_FIELDS;
+static const struct ng_parse_type ng_ipoe_config_type = {
 	&ng_parse_struct_type,
-	&ng_qwe_config_fields
+	&ng_ipoe_config_fields
 };
 
-/* Parse type for struct ng_qwe_arp. */
-static const struct ng_parse_struct_field ng_qwe_arp_fields[] =
-	NG_QWE_ARP_FIELDS;
-static const struct ng_parse_type ng_qwe_arp_type = {
+/* Parse type for struct ng_ipoe_arp. */
+static const struct ng_parse_struct_field ng_ipoe_arp_fields[] =
+	NG_IPOE_ARP_FIELDS;
+static const struct ng_parse_type ng_ipoe_arp_type = {
 	&ng_parse_struct_type,
-	&ng_qwe_arp_fields
+	&ng_ipoe_arp_fields
 };
 
-static const struct ng_cmdlist ng_qwe_cmdlist[] = {
+static const struct ng_cmdlist ng_ipoe_cmdlist[] = {
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_ADD_FILTER,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_ADD_FILTER,
 	  "addfilter",
-	  &ng_qwe_filter_type,
+	  &ng_ipoe_filter_type,
 	  NULL
 	},
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_DEL_FILTER,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_DEL_FILTER,
 	  "delfilter",
 	  &ng_parse_hookbuf_type,
 	  NULL
 	},
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_ADD_ARP,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_ADD_ARP,
 	  "addarp",
-	  &ng_qwe_arp_type,
+	  &ng_ipoe_arp_type,
 	  NULL
 	},
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_DEL_ARP,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_DEL_ARP,
 	  "delarp",
-	  &ng_qwe_arp_type,
+	  &ng_ipoe_arp_type,
 	  NULL
 	},
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_GET_ENADDR,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_GET_ENADDR,
 	  "getenaddr",
 	  NULL,
 	  &ng_parse_enaddr_type
 	},
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_SET_ENADDR,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_SET_ENADDR,
 	  "setenaddr",
 	  &ng_parse_enaddr_type,
 	  NULL
 	},
 	{
-	  NGM_QWE_COOKIE,
-	  NGM_QWE_GET_CONFIG,
+	  NGM_IPOE_COOKIE,
+	  NGM_IPOE_GET_CONFIG,
 	  "getconfig",
 	  &ng_parse_hookbuf_type,
-	  &ng_qwe_config_type
+	  &ng_ipoe_config_type
 	},
 	{ 0 }
 };
@@ -201,16 +201,16 @@ static const struct ng_cmdlist ng_qwe_cmdlist[] = {
 /* Netgraph node type descriptor */
 static struct ng_type typestruct = {
 	.version =	NG_ABI_VERSION,
-	.name =		NG_QWE_NODE_TYPE,
-	.constructor =	ng_qwe_constructor,
-	.rcvmsg =	ng_qwe_rcvmsg,
-	.shutdown =	ng_qwe_shutdown,
-	.newhook =	ng_qwe_newhook,
-	.rcvdata =	ng_qwe_rcvdata,
-	.disconnect =	ng_qwe_disconnect,
-	.cmdlist =	ng_qwe_cmdlist,
+	.name =		NG_IPOE_NODE_TYPE,
+	.constructor =	ng_ipoe_constructor,
+	.rcvmsg =	ng_ipoe_rcvmsg,
+	.shutdown =	ng_ipoe_shutdown,
+	.newhook =	ng_ipoe_newhook,
+	.rcvdata =	ng_ipoe_rcvdata,
+	.disconnect =	ng_ipoe_disconnect,
+	.cmdlist =	ng_ipoe_cmdlist,
 };
-NETGRAPH_INIT(qwe, &typestruct);
+NETGRAPH_INIT(ipoe, &typestruct);
 
 
 /* Information we store for each node */
@@ -232,7 +232,7 @@ struct filter {
 
 LIST_HEAD(filterhead, filter);
 
-struct ng_qwe_private {
+struct ng_ipoe_private {
 	hook_p  	nomatch;
 	hook_p  	downstream;
 	hook_p  	service;
@@ -240,11 +240,11 @@ struct ng_qwe_private {
 	u_char		mac[ETHER_ADDR_LEN];
 	node_p		node;		/* back pointer to node */
 };
-typedef struct ng_qwe_private *private_p;
+typedef struct ng_ipoe_private *private_p;
 
 /* VLAN related functions. */
 static struct filter *
-ng_qwe_find_entry(private_p priv,
+ng_ipoe_find_entry(private_p priv,
     u_int16_t outer_vlan, u_int16_t inner_vlan)
 {
 	struct filterhead	*head = &priv->filters;
@@ -259,7 +259,7 @@ ng_qwe_find_entry(private_p priv,
 }
 
 static void
-ng_qwe_add_filter(hook_p hook,
+ng_ipoe_add_filter(hook_p hook,
     u_int16_t outer_vlan, u_int16_t inner_vlan)
 {
 	private_p	node_priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
@@ -273,7 +273,7 @@ ng_qwe_add_filter(hook_p hook,
 }
 
 static void
-ng_qwe_del_filter(hook_p hook)
+ng_ipoe_del_filter(hook_p hook)
 {
 	struct filter *f = NG_HOOK_PRIVATE(hook);
 
@@ -286,7 +286,7 @@ ng_qwe_del_filter(hook_p hook)
 
 /* ARP related functions. */
 static int
-ng_qwe_is_valid_arp(const struct in_addr *ip, const u_char mac[ETHER_ADDR_LEN])
+ng_ipoe_is_valid_arp(const struct in_addr *ip, const u_char mac[ETHER_ADDR_LEN])
 {
 	struct in_addr	wildcard_ip = { 0 };
 	const u_char	wildcard_mac[ETHER_ADDR_LEN] =
@@ -305,7 +305,7 @@ ng_qwe_is_valid_arp(const struct in_addr *ip, const u_char mac[ETHER_ADDR_LEN])
 }
 
 static struct arp_entry *
-ng_qwe_find_arp(hook_p hook, const struct in_addr *ip,
+ng_ipoe_find_arp(hook_p hook, const struct in_addr *ip,
     const u_char mac[ETHER_ADDR_LEN])
 {
 	struct filter *filter = NG_HOOK_PRIVATE(hook);
@@ -328,10 +328,10 @@ ng_qwe_find_arp(hook_p hook, const struct in_addr *ip,
 }
 
 static int
-ng_qwe_add_arp(hook_p hook, const struct in_addr *ip,
+ng_ipoe_add_arp(hook_p hook, const struct in_addr *ip,
     const u_char mac[ETHER_ADDR_LEN])
 {
-	struct arp_entry *arp = ng_qwe_find_arp(hook, ip, mac);
+	struct arp_entry *arp = ng_ipoe_find_arp(hook, ip, mac);
 	struct filter *filter = NG_HOOK_PRIVATE(hook);
 	KASSERT(filter != NULL,
 	    ("attemp to add arp entry to a vlan without an attached filter"));
@@ -354,10 +354,10 @@ ng_qwe_add_arp(hook_p hook, const struct in_addr *ip,
 }
 
 static int
-ng_qwe_del_arp(hook_p hook, const struct in_addr *ip,
+ng_ipoe_del_arp(hook_p hook, const struct in_addr *ip,
     const u_char mac[ETHER_ADDR_LEN])
 {
-	struct arp_entry *arp = ng_qwe_find_arp(hook, ip, mac);
+	struct arp_entry *arp = ng_ipoe_find_arp(hook, ip, mac);
 	struct filter *filter = NG_HOOK_PRIVATE(hook);
 
 	if (arp == NULL)
@@ -372,7 +372,7 @@ ng_qwe_del_arp(hook_p hook, const struct in_addr *ip,
 }
 
 static struct mbuf *
-ng_qwe_process_arp(struct mbuf * m, private_p priv)
+ng_ipoe_process_arp(struct mbuf * m, private_p priv)
 {
 	struct arphdr			*arp = NULL;
 	struct ether_vlan_header	*evl = NULL;
@@ -421,7 +421,7 @@ ng_qwe_process_arp(struct mbuf * m, private_p priv)
 	}
 
 	/* Check whether we handle this vlan at all. */
-	filter = ng_qwe_find_entry(priv,
+	filter = ng_ipoe_find_entry(priv,
 	    EVL_VLANOFTAG(m->m_pkthdr.ether_vtag),
 	    EVL_VLANOFTAG(ntohs(evl->evl_tag)));
 
@@ -434,7 +434,7 @@ ng_qwe_process_arp(struct mbuf * m, private_p priv)
 	 * Target vlan found.
 	 * Check against ARP table.
 	 */
-	arp_entry = ng_qwe_find_arp(filter->hook,
+	arp_entry = ng_ipoe_find_arp(filter->hook,
 	    (struct in_addr *)ar_spa(arp), evl->evl_shost);
 
 	if (arp_entry == NULL) {
@@ -476,7 +476,7 @@ ng_qwe_process_arp(struct mbuf * m, private_p priv)
  * to creatednodes that depend on hardware (unless you can add the hardware :)
  */
 static int
-ng_qwe_constructor(node_p node)
+ng_ipoe_constructor(node_p node)
 {
 	private_p priv;
 
@@ -493,18 +493,18 @@ ng_qwe_constructor(node_p node)
 }
 
 static int
-ng_qwe_newhook(node_p node, hook_p hook, const char *name)
+ng_ipoe_newhook(node_p node, hook_p hook, const char *name)
 {
 	private_p	priv = NG_NODE_PRIVATE(node);
 	struct filter	*f = NULL;
 
 	NG_HOOK_SET_PRIVATE(hook, NULL);
 
-	if (strcmp(name, NG_QWE_HOOK_NOMATCH) == 0)
+	if (strcmp(name, NG_IPOE_HOOK_NOMATCH) == 0)
 		priv->nomatch = hook;
-	else if (strcmp(name, NG_QWE_HOOK_DOWNSTREAM) == 0)
+	else if (strcmp(name, NG_IPOE_HOOK_DOWNSTREAM) == 0)
 		priv->downstream = hook;
-	else if (strcmp(name, NG_QWE_HOOK_SERVICE) == 0)
+	else if (strcmp(name, NG_IPOE_HOOK_SERVICE) == 0)
 		priv->service = hook;
 	else {
 		/*
@@ -528,27 +528,27 @@ ng_qwe_newhook(node_p node, hook_p hook, const char *name)
 }
 
 static int
-ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
+ng_ipoe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 {
 	const private_p priv = NG_NODE_PRIVATE(node);
 	int error = 0;
 	struct ng_mesg		*msg, *resp = NULL;
-	struct ng_qwe_filter	*vf = NULL;
-	struct ng_qwe_arp	*varp = NULL;
+	struct ng_ipoe_filter	*vf = NULL;
+	struct ng_ipoe_arp	*varp = NULL;
 	hook_p hook = NULL;
 
 	NGI_GET_MSG(item, msg);
 	/* Deal with message according to cookie and command. */
 	switch (msg->header.typecookie) {
-	case NGM_QWE_COOKIE:
+	case NGM_IPOE_COOKIE:
 		switch (msg->header.cmd) {
-		case NGM_QWE_ADD_FILTER:
+		case NGM_IPOE_ADD_FILTER:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != sizeof(*vf)) {
 				error = EINVAL;
 				break;
 			}
-			vf = (struct ng_qwe_filter *)msg->data;
+			vf = (struct ng_ipoe_filter *)msg->data;
 			/* Sanity check the VLAN ID values. */
 			if (IS_INVALID_VLAN(vf->outer_vlan) ||
 			    IS_INVALID_VLAN(vf->inner_vlan)) {
@@ -574,16 +574,16 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				break;
 			}
 			/* Check we don't already trap these VLANs. */
-			if (ng_qwe_find_entry(priv, vf->outer_vlan,
+			if (ng_ipoe_find_entry(priv, vf->outer_vlan,
 			    vf->inner_vlan)) {
 				error = EEXIST;
 				break;
 			}
 			/* Register filter. */
-			ng_qwe_add_filter(hook,
+			ng_ipoe_add_filter(hook,
 			    vf->outer_vlan, vf->inner_vlan);
 			break;
-		case NGM_QWE_DEL_FILTER:
+		case NGM_IPOE_DEL_FILTER:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != NG_HOOKSIZ) {
 				error = EINVAL;
@@ -596,15 +596,15 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				break;
 			}
 			/* Unregister filter. */
-			ng_qwe_del_filter(hook);
+			ng_ipoe_del_filter(hook);
 			break;
-		case NGM_QWE_ADD_ARP:
+		case NGM_IPOE_ADD_ARP:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != sizeof(*varp)) {
 				error = EINVAL;
 				break;
 			}
-			varp = (struct ng_qwe_arp *)msg->data;
+			varp = (struct ng_ipoe_arp *)msg->data;
 			/* Check that a referenced hook exists. */
 			hook = ng_findhook(node, varp->hook);
 			if (hook == NULL) {
@@ -620,20 +620,20 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			}
 
 			/* Validate IP and MAC. */
-			if (!ng_qwe_is_valid_arp(&varp->ip, varp->mac)) {
+			if (!ng_ipoe_is_valid_arp(&varp->ip, varp->mac)) {
 				error = EINVAL;
 				break;
 			}
 
-			error = ng_qwe_add_arp(hook, &varp->ip, varp->mac);
+			error = ng_ipoe_add_arp(hook, &varp->ip, varp->mac);
 			break;
-		case NGM_QWE_DEL_ARP:
+		case NGM_IPOE_DEL_ARP:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != sizeof(*varp)) {
 				error = EINVAL;
 				break;
 			}
-			varp = (struct ng_qwe_arp *)msg->data;
+			varp = (struct ng_ipoe_arp *)msg->data;
 			/* Check that a referenced hook exists. */
 			hook = ng_findhook(node, varp->hook);
 			if (hook == NULL) {
@@ -648,9 +648,9 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				break;
 			}
 
-			error = ng_qwe_del_arp(hook, &varp->ip, varp->mac);
+			error = ng_ipoe_del_arp(hook, &varp->ip, varp->mac);
 			break;
-		case NGM_QWE_GET_ENADDR:
+		case NGM_IPOE_GET_ENADDR:
 			NG_MKRESPONSE(resp, msg, ETHER_ADDR_LEN, M_NOWAIT);
 			if (resp == NULL) {
 				error = ENOMEM;
@@ -658,7 +658,7 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			}
 			bcopy(priv->mac, resp->data, ETHER_ADDR_LEN);
 			break;
-		case NGM_QWE_SET_ENADDR:
+		case NGM_IPOE_SET_ENADDR:
 			/* Check that message is long enough. */
 			if (msg->header.arglen != ETHER_ADDR_LEN) {
 				error = EINVAL;
@@ -666,12 +666,12 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			}
 			bcopy(msg->data, priv->mac, ETHER_ADDR_LEN);
 			break;
-		case NGM_QWE_GET_CONFIG:
+		case NGM_IPOE_GET_CONFIG:
 		    {
 			struct filter		*filter = NULL;
-			struct ng_qwe_config	*config = NULL;
+			struct ng_ipoe_config	*config = NULL;
 			struct arp_entry	*src_arp;
-			struct ng_qwe_arp_entry	*dst_arp;
+			struct ng_ipoe_arp_entry	*dst_arp;
 
 			/* Check that message is long enough. */
 			if (msg->header.arglen != NG_HOOKSIZ) {
@@ -698,7 +698,7 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 				error = ENOMEM;
 				break;
 			}
-			config = (struct ng_qwe_config *)resp->data;
+			config = (struct ng_ipoe_config *)resp->data;
 			config->outer_vlan = filter->outer_vlan;
 			config->inner_vlan = filter->inner_vlan;
 			config->arp_len = filter->arp_len;
@@ -757,7 +757,7 @@ ng_qwe_rcvmsg(node_p node, item_p item, hook_p lasthook)
 }
 
 static int
-ng_qwe_rcvdata(hook_p hook, item_p item)
+ng_ipoe_rcvdata(hook_p hook, item_p item)
 {
 	const private_p priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
 	int		error = 0;
@@ -814,7 +814,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			 * So try to process QinQ ARP packet right here.
 			 */
 
-			m = ng_qwe_process_arp(m, priv);
+			m = ng_ipoe_process_arp(m, priv);
 			if (m == NULL) {
 				NG_FREE_ITEM(item);
 				return (0);
@@ -881,7 +881,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 		 *
 		 * Try to find a vlan hook for it otherwise deliver to nomatch.
 		 */
-		target_filter = ng_qwe_find_entry(priv,
+		target_filter = ng_ipoe_find_entry(priv,
 		    EVL_VLANOFTAG(m->m_pkthdr.ether_vtag),
 		    EVL_VLANOFTAG(ntohs(evl->evl_tag)));
 
@@ -891,7 +891,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 			 * Check against ARP table.
 			 */
 
-			if (ng_qwe_find_arp(target_filter->hook, &ip->ip_src,
+			if (ng_ipoe_find_arp(target_filter->hook, &ip->ip_src,
 			    evl->evl_shost) == NULL) {
 				/*
 				 * No entry in ARP found.
@@ -984,7 +984,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
 		}
 
 		ip = mtod(m, struct ip *);
-		arp = ng_qwe_find_arp(hook, &ip->ip_dst, NULL);
+		arp = ng_ipoe_find_arp(hook, &ip->ip_dst, NULL);
 		if (arp == NULL) {
 			/*
 			 * Discard packet as there's no ARP entry for it.
@@ -1031,7 +1031,7 @@ ng_qwe_rcvdata(hook_p hook, item_p item)
  * Do local shutdown processing.
  */
 static int
-ng_qwe_shutdown(node_p node)
+ng_ipoe_shutdown(node_p node)
 {
 	const private_p	priv = NG_NODE_PRIVATE(node);
 
@@ -1049,7 +1049,7 @@ ng_qwe_shutdown(node_p node)
  * For this type, removal of the last link destroys the node
  */
 static int
-ng_qwe_disconnect(hook_p hook)
+ng_ipoe_disconnect(hook_p hook)
 {
 	const private_p priv = NG_NODE_PRIVATE(NG_HOOK_NODE(hook));
 	struct filter *filter = NG_HOOK_PRIVATE(hook);
