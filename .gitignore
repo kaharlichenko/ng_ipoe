@@ -1,3 +1,8 @@
 x86
 @
 machine
+export_syms
+ng_ipoe.ko
+ng_ipoe.ko.debug
+ng_ipoe.ko.symbols
+ng_ipoe.o
