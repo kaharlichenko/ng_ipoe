@@ -280,7 +280,7 @@ ng_ipoe_del_filter(hook_p hook)
 	f->outer_vlan = 0;
 	f->inner_vlan = 0;
 
-	/* Register filter in a filter list. */
+	/* Remove filter from a filter list. */
 	LIST_REMOVE(f, next);
 }
 
