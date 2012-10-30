@@ -1075,6 +1075,8 @@ ng_ipoe_disconnect(hook_p hook)
 		 * No need to init the arp table list head
 		 * since we are deleting the filter anyway.
 		 */
+		
+		ng_ipoe_del_filter(hook);
 		free(filter, M_NETGRAPH);
 	}
 	NG_HOOK_SET_PRIVATE(hook, NULL);
